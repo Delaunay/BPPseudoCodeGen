@@ -79,7 +79,11 @@ function PropertyTypeToString(TypeObject) {
     VariableType = `TSet<${VariableType}>`;
   } else if (ContainerType == 3) {
     let ValueTypeObject = TypeObject.PinValueType;
-    let ValueType = GetBasicType(ValueTypeObject.TerminalCategory, ObjectNameFromPath(ValueTypeObject.TerminalSubCategoryObject), ValueTypeObject.IsWeakPointer);
+    let ValueType = GetBasicType(
+        ValueTypeObject.TerminalCategory,
+        ObjectNameFromPath(ValueTypeObject.TerminalSubCategoryObject),
+        ValueTypeObject.IsWeakPointer);
+
     if (ValueTypeObject.IsConst) {
       ValueType = `const ${ValueType}`;
     }
@@ -159,6 +163,7 @@ function _ToStringInstruction(Instruction, FunctionState, Context, IsAssignmentL
     }
     return NewVariableName;
   }
+
   if (Instruction.Instruction === "EX_InstanceVariable" || Instruction.Instruction === "EX_DefaultVariable") {
     let VariableName = Instruction.VarName;
     return Context + "->" + VariableName;
@@ -226,6 +231,7 @@ function _ToStringInstruction(Instruction, FunctionState, Context, IsAssignmentL
     }
     return CallPrefix + "(" + ResultArguments.join(", ") + ")";
   }
+
   if (Instruction.Instruction === "EX_VirtualFunction" || Instruction.Instruction === "EX_LocalVirtualFunction") {
     let FunctionName = ObjectNameFromPath(Instruction.Function);
     return ToStringFunctionCall(Context + "->" + FunctionName);
@@ -493,7 +499,14 @@ function EnsureDirectoryExists(DirectoryPath) {
 
 function AppendFunctionCode(FunctionName, CodeArray, Appender) {
   Appender("============ BEGIN FUNCTION " + FunctionName + " ==============\n");
-  let FunctionState = {LocalVariables: {}, RenamedLocalVariables: {}, UsedVariableNames: {}, Object: "this", LastExpression: "$INVALID_EXPRESSION$" };
+  let FunctionState = {
+    LocalVariables: {},
+    RenamedLocalVariables: {},
+    UsedVariableNames: {},
+    Object: "this",
+    LastExpression: "$INVALID_EXPRESSION$"
+    };
+  }
   for (let CodeElement of CodeArray) {
     let InstructionOffset = CodeElement.InstOffsetFromTop;
     let LinePrefix = (`L${InstructionOffset}:`).padEnd(15, ' ');
