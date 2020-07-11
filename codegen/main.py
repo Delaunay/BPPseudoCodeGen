@@ -1,24 +1,77 @@
 import json
 from dataclasses import dataclass, field
 from typing import List
+from argparse import Namespace
 
+missing = dict()
+missing_sorted = dict()
+value_examples = []
+
+
+def safe_ctor(ctor, kwargs):
+    exception = True
+
+    if not isinstance(kwargs, dict):
+        return kwargs
+
+    while exception:
+        try:
+            self = ctor(**kwargs)
+            exception = False
+
+        except TypeError as error:
+            exception = error
+            msg: str = error.args[0]
+
+            start = msg.find("'")
+            end = msg.rfind("'")
+
+            name = msg[start + 1:end]
+            val = kwargs.pop(name)
+
+            ctor_name = ctor.__name__
+            if (ctor_name, name) not in missing:
+                # print(f'{ctor_name}_{name}: {type(val).__name__} = None')
+                missing[(ctor_name, name)] = val
+
+                if ctor_name not in missing_sorted:
+                    missing_sorted[ctor_name] = []
+
+                missing_sorted[ctor_name].append((name, val))
+
+    return self
 
 @dataclass
 class Value:
-    AssetPath: str = ''
+    val: Namespace = None
 
     @staticmethod
     def from_dict(kwargs):
         if not isinstance(kwargs, dict):
             return kwargs
 
-        asset = kwargs.pop('$AssetPath')
-        self = Value(**kwargs)
-        self.AssetPath = asset
+        new_kwargs = dict()
+        for k, v in kwargs.items():
+            if k[0] == '$':
+                new_kwargs[k[1:]] = v
+            else:
+                new_kwargs[k] = v
+
+        # Value can hold anything we cannot
+        # create a struct for it
+        # safe_ctor(Value, new_kwargs)
+        self = Value()
+        self.val = Namespace(**new_kwargs)
+        value_examples.append(self)
         return self
 
+    def to_json(self):
+        value = dict(Expression='Value')
+        value.update(**vars(self.val))
+        return value
+
     def generate(self):
-        return 'Asset'
+        return repr(self)
 
 
 @dataclass
@@ -33,15 +86,19 @@ class Field:
         if not isinstance(kwargs, dict):
             return kwargs
 
-        self = Field(**kwargs)
+        self = safe_ctor(Field, kwargs)
         self.PinType = Type.from_dict(self.PinType)
         self.Value = Value.from_dict(self.Value)
         return self
 
     def generate(self):
         val = ''
-        if self.Value:
+
+        if isinstance(self.Value, Value):
             val = f' = {self.Value.generate()}'
+
+        elif self.Value is not None:
+            val = f' = {self.Value}'
 
         vtype = ''
         if self.PinType:
@@ -60,7 +117,7 @@ class Argument:
         if not isinstance(kwargs, dict):
             return kwargs
 
-        self =  Argument(**kwargs)
+        self =  safe_ctor(Argument, kwargs)
         self.PinType = Type.from_dict(self.PinType)
         return self
 
@@ -70,23 +127,28 @@ class Argument:
 
 @dataclass
 class Type:
-    PinCategory: str = ''
-    PinSubCategory: str = ''
-    PinSubCategoryObject: str = ''
-    ContainerType: int = 0
+    PinCategory: str = None
+    PinSubCategory: str = None
+    PinSubCategoryObject: str = None
+    ContainerType: int = None
     IsWeakPointer: bool = False
     PinValueType: 'Type' = None
-    TerminalCategory: str = ''
-    TerminalSubCategoryObject: str = ''
+
     IsConst: bool = False
     IsReference: bool = False
+
+    TerminalSubCategory: str = None
+    TerminalIsConst: bool = None
+    TerminalIsWeakPointer: bool = None
+    TerminalCategory: str = None
+    TerminalSubCategoryObject: str = None
 
     @staticmethod
     def from_dict(kwargs):
         if not isinstance(kwargs, dict):
             return kwargs
 
-        self = Type(**kwargs)
+        self = safe_ctor(Type, kwargs)
         self.PinValueType = Type.from_dict(self.PinValueType)
         return self
 
@@ -199,6 +261,7 @@ class Instruction:
 
     Type: str = None
     Offset: int = None
+    Size: int = None
 
     # Text
     SrcStr: str = None
@@ -206,24 +269,38 @@ class Instruction:
     KeyStr: str = None
     OffsetToNextCase: int = None
 
+    Namespace: Instruction = None  # {'Instruct
+    TableIDStr: Instruction = None  # {'Instruct
+    Index: Instruction = None  # {'Instruct
+    Signature: str = None  # 'Function
+    Num: int = None  # 0
+
     @staticmethod
     def from_dict(kwargs):
         if not isinstance(kwargs, dict):
             return kwargs
 
-        self = Instruction(**kwargs)
+        self = safe_ctor(Instruction, kwargs)
+
         self.EvaluateProp = Instruction.from_dict(self.EvaluateProp)
         self.EvaluateExp = Instruction.from_dict(self.EvaluateExp)
         self.Code = Instruction.from_dict(self.Code)
 
-        if isinstance(self.Value, dict):
-            self.Value = Instruction.from_dict(self.Value)
+        self.Namespace = Instruction.from_dict(self.Namespace)
+        self.TableIDStr = Instruction.from_dict(self.TableIDStr)
+        self.Index = Instruction.from_dict(self.Index)
+
+        self.Value = Instruction.from_dict(self.Value)
+        self.Key = Instruction.from_dict(self.Key)
 
         if self.Condition:
             self.Condition = Instruction.from_dict(self.Condition)
 
         if self.Params:
             self.Params = [Instruction.from_dict(param) for param in self.Params]
+
+        if self.Values:
+            self.Values = [Instruction.from_dict(val) for val in self.Values]
 
         self.Interface = Instruction.from_dict(self.Interface)
 
@@ -234,7 +311,6 @@ class Instruction:
 
         self.Delegate = Instruction.from_dict(self.Delegate)
         self.Variable = Instruction.from_dict(self.Variable)
-
         self.Offset = Instruction.from_dict(self.Offset)
 
         if self.Cases:
@@ -243,8 +319,12 @@ class Instruction:
         if isinstance(self.Context, dict):
             self.Context = Instruction.from_dict(self.Context)
 
-        if self.VarType:
-            self.VarType = Type.from_dict(self.VarType)
+        self.VarType = Type.from_dict(self.VarType)
+        self.Set = Instruction.from_dict(self.Set)
+        self.Array = Instruction.from_dict(self.Array)
+        self.Map = Instruction.from_dict(self.Map)
+        self.Object = Instruction.from_dict(self.Object)
+        self.Castee = Instruction.from_dict(self.Castee)
 
         return self
 
@@ -368,7 +448,7 @@ class Instruction:
         offset = self.Offset
         condition = self.Condition.generate(state, state.Object)
 
-        if condition.starswith('!'):
+        if condition.startswith('!'):
             condition = condition[1:]
         condition = f'!{condition}'
 
@@ -390,7 +470,7 @@ class Instruction:
     def pop_exec_if_not(self, state, obj, *args):
         condition = self.Condition.generate(state, state.Object)
 
-        if condition.starswith('!'):
+        if condition.startswith('!'):
             condition = condition[1:]
         condition = f'!{condition}'
 
@@ -413,8 +493,14 @@ class Instruction:
         return f'{variable}.Remove({bound})'
 
     def clear_multicast(self, state, obj, *args):
-        variable = self.Variable.generate(state, state.Object)
+        if self.Variable is not None:
+            variable = self.Variable.generate(state, state.Object)
+        else:
+            variable = self.Delegate.generate(state, state.Object)
+
         return f'{variable}.Clear()'
+
+    Object: Instruction = None
 
     def bind_delegate(self, state, obj, *args):
         variable = self.Variable.generate(state, state.Object)
@@ -463,12 +549,15 @@ class Instruction:
     def _map_literal(self, state):
         values = []
         for arg in self.Values:
-            key_val = arg.Key.generate(state, state.object)
-            val_val = arg.Value.generate(state, state.object)
+            key_val = arg.Key.generate(state, state.Object)
+            val_val = arg.Value.generate(state, state.Object)
             values.append(f'{key_val}: {val_val}')
 
         values = ', '.join(values)
         return f'{{{values}}}'
+
+    Set: Instruction = None
+    Map: Instruction = None
 
     def map_const(self, state, obj, *args):
         map_type = f'Map<{self.KeyType}, {self.ValueTYpe}>'
@@ -476,7 +565,7 @@ class Instruction:
         return f'{map_type}(${literal})'
 
     def set_map(self, state, obj, *args):
-        map_inst = self.Set.generate(state, state.object, True)
+        map_inst = self.Map.generate(state, state.Object, True)
         literal = self._map_literal(state)
         # ?
         return f'{map_inst} = {literal}'
@@ -487,7 +576,7 @@ class Instruction:
         return f'Set<{set_type}>(${literal})'
 
     def set_set(self, state, obj, *args):
-        set_inst = self.Set.generate(state, state.object, True)
+        set_inst = self.Set.generate(state, state.Object, True)
         literal = self._array_literal(state)
         # ?
         return f'{set_inst} = {literal}'
@@ -497,7 +586,7 @@ class Instruction:
     def _array_literal(self, state):
         values = []
         for arg in self.Values:
-            arg_val = arg.generate(state, state.object)
+            arg_val = arg.generate(state, state.Object)
             values.append(arg_val)
 
         values = ', '.join(values)
@@ -615,7 +704,7 @@ class Instruction:
 
     # Rotation
     Pitch: float = 0
-    Yam: float = 0
+    Yaw: float = 0
     Roll: float = 0
 
     def rotation_const(self, state, obj, *args):
@@ -750,21 +839,22 @@ class FunctionGenerationState:
 
 @dataclass
 class Function:
-    Name: str = ''
+    Name: str = None
     Arguments: List[Argument] = field(default_factory=list)
     Outputs: List = field(default_factory=list)
-    Access: str = ''
-    FunctionFlags: int = 0
+    Access: str = None
+    FunctionFlags: int = None
     Code: List[Instruction] = field(default_factory=list)
     SuperClass: str = None
-    IsOverride: bool = True
+    IsOverride: bool = None
+    Static: bool = None
 
     @staticmethod
     def from_dict(kwargs):
         if not isinstance(kwargs, dict):
             return kwargs
 
-        self = Function(**kwargs)
+        self = safe_ctor(Function, kwargs)
         self.Arguments = [Argument.from_dict(arg) for arg in self.Arguments]
         self.Code = [Instruction.from_dict(inst) for inst in self.Code if inst is not None]
 
@@ -804,12 +894,18 @@ class Blueprint:
     Fields: List[Field] = field(default_factory=list)
     Functions: List[Function] = field(default_factory=list)
 
+    ConstructionScript: str = None
+
+    ImplementedInterfaces: list = None  # ['/Script/FactoryGame.FGActorRepresentat
+    DynamicBindings: list = None  # [{'Type': 'Component', 'Bindings': [{'Co
+    TargetSkeleton: dict = None  # {'$AssetPath': '/Game/FactoryGame/Builda
+
     @staticmethod
     def from_dict(kwargs):
         if not isinstance(kwargs, dict):
             return kwargs
 
-        self = Blueprint(**kwargs)
+        self = safe_ctor(Blueprint, kwargs)
         self.Fields = [Field.from_dict(field) for field in self.Fields]
         self.Functions = [Function.from_dict(fun) for fun in self.Functions]
         return self
@@ -837,7 +933,7 @@ class Blueprint:
 
 
 
-def main(filename):
+def main(filename, outdir):
     with open(filename, 'rb') as file:
         decoded_pak = json.loads(file.read().decode('utf-8-sig'))
 
@@ -847,14 +943,49 @@ def main(filename):
 
     for kwargs in blueprints:
         bp = Blueprint.from_dict(kwargs)
-        code = bp.generate()
 
-        print(code)
-        break
+        try:
+            code = bp.generate()
+        except:
+            import traceback
+            print(bp.Blueprint)
+            print(traceback.format_exc())
+            continue
+
+        path, name = bp.Blueprint.split('.', maxsplit=1)
+        if path[0] == '/':
+            path = path[1:]
+
+
+        path = os.path.join(outdir, path)
+        os.makedirs(path, exist_ok=True)
+        filepath = os.path.join(path, f'{name}.py')
+
+
+        with open(filepath, 'wb') as bpfile:
+            bpfile.write(code.encode('utf-8-sig'))
+
+
+    for k, missings in missing_sorted.items():
+        print(k)
+        print('=' * 80)
+
+        for k, v in missings:
+            rep = repr(v)
+            if len(rep) > 40:
+                rep = rep[:40]
+
+            print(f'{k}: {type(v).__name__} = None # {rep}')
+
+    with open('values.json', 'w') as value_file:
+        json.dump([v.to_json() for v in value_examples], value_file, indent=2)
 
 
 if __name__ == '__main__':
     import os
+    import sys
+    sys.stderr = sys.stdout
 
     folder = os.path.dirname(__file__)
-    main(os.path.join(folder, '..', 'FGBlueprints.json'))
+    main(os.path.join(folder, '..', 'FGBlueprints.json'),
+         os.path.join(folder, '..', 'out'))
